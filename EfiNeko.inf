@@ -1,0 +1,22 @@
+[Defines]
+   INF_VERSION    = 0x00010005
+   BASE_NAME      = EfiNeko
+   FILE_GUID      = 86f55dc4-5410-42f7-ad82-ac95d979d248
+   MODULE_TYPE    = UEFI_APPLICATION
+   VERSION_STRING = 0.1
+   ENTRY_POINT    = NekoMain
+
+[Sources]
+   EfiNeko.c
+
+[Packages]
+   MdePkg/MdePkg.dec
+   NekoPkg/NekoPkg.dec
+
+[LibraryClasses]
+   UefiApplicationEntryPoint
+   UefiLib
+   BaseLib
+
+[Protocols]
+   gEfiSimplePointerProtocolGuid
