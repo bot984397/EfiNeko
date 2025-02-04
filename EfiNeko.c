@@ -12,6 +12,9 @@
       return Status; \
    }
 
+#define CURSOR_WIDTH 1
+#define CURSOR_HEIGHT 1
+
 typedef enum {
    NEKO_SLEEPING,
    NEKO_WALKING,
@@ -21,15 +24,25 @@ typedef enum {
 } NekoAnim;
 
 typedef struct {
+   EFI_SIMPLE_POINTER_PROTOCOL *Spp;
+   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop;
+
    INT32 NekoX;
    INT32 NekoY;
 
    INT32 PtrX;
    INT32 PtrY;
+   INT32 ScrX;
+   INT32 ScrY;
 
    NekoAnim Anim;
    BOOLEAN ShouldQuit;
 } NekoState;
+
+VOID EFIAPI
+NekoHardReset(NekoState *State) {
+
+}
 
 EFI_STATUS EFIAPI
 NekoInitSpp(EFI_SIMPLE_POINTER_PROTOCOL **Spp) {
@@ -102,13 +115,18 @@ NekoInitGop(EFI_GRAPHICS_OUTPUT_PROTOCOL **Gop, NekoState *State) {
    Status = NekoSetGopMode(*Gop);
    FASTFAIL();
 
+   State->ScrX = (*Gop)->Mode->Info->HorizontalResolution;
+   State->ScrY = (*Gop)->Mode->Info->VerticalResolution;
+
    return EFI_SUCCESS;
 }
 
 EFI_STATUS EFIAPI
-NekoSetBackground(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop, NekoState *State) {
+NekoDrawBackground(NekoState *State) {
+   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
    // we'll use a black screen for now, add support for images etc later.
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pix = {0, 0, 0, 0};
+
    UINTN Width = Gop->Mode->Info->HorizontalResolution;
    UINTN Height = Gop->Mode->Info->VerticalResolution;
 
@@ -118,11 +136,43 @@ NekoSetBackground(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop, NekoState *State) {
 }
 
 VOID EFIAPI
+NekoUpdateCursorPos(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
+   // FIXME: add adaptive scaling
+   INT32 NewX = State->PtrX + (Ptr.RelativeMovementX / 100);
+   INT32 NewY = State->PtrY + (Ptr.RelativeMovementY / 100);
+
+   State->PtrX = MAX(0, MIN(NewX, (INT32)State->ScrX - CURSOR_WIDTH));
+   State->PtrY = MAX(0, MIN(NewY, (INT32)State->ScrY - CURSOR_HEIGHT));
+}
+
+VOID EFIAPI
+NekoDrawCursor(NekoState *State) {
+   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pix = {255, 255, 255, 0};
+   Gop->Blt(Gop, &Pix, EfiBltVideoFill, 0, 0, State->PtrX, State->PtrY,
+            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+}
+
+VOID EFIAPI
+NekoUpdateSpritePos() {
+
+}
+
+VOID EFIAPI
+NekoDrawSprite(NekoState *State) {
+
+}
+
+VOID EFIAPI
 NekoHandleKeyEvent(EFI_INPUT_KEY Key, NekoState *State) {
    switch (Key.UnicodeChar) {
    case 'q':
+   case 'Q':
       State->ShouldQuit = TRUE;
       break;
+   case 'r':
+   case 'R':
+      NekoHardReset(State);
    }
 }
 
@@ -131,6 +181,8 @@ NekoHandleMouseEvent(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
    if (Ptr.LeftButton == TRUE) {
       Print(L"Left button pressed\n");
    } 
+
+   NekoUpdateCursorPos(Ptr, State);
 }
 
 EFI_STATUS EFIAPI 
@@ -149,7 +201,8 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
       return Status;
    }
 
-   NekoSetBackground(Gop, &State);
+   State.Spp = Spp;
+   State.Gop = Gop;
 
    EFI_EVENT PtrEvent;
    EFI_EVENT WaitList[2];
@@ -181,6 +234,9 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             NekoHandleKeyEvent(Key, &State);
          }
       }
+
+      NekoDrawBackground(&State);
+      NekoDrawCursor(&State);
    }
 
    return EFI_SUCCESS;
