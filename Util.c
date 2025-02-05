@@ -12,57 +12,96 @@
    }
 
 EFI_STATUS EFIAPI
-UtLoadFileFromRoot(EFI_HANDLE Handle, CHAR16 *Name, VOID **Buf, UINTN *Size) {
+UtLoadFileFromRoot(EFI_HANDLE ImageHandle, 
+                   CHAR16 *FileName, 
+                   VOID **FileBuffer, 
+                   UINTN *FileSize) {
    EFI_STATUS Status;
-   EFI_LOADED_IMAGE_PROTOCOL *Lip;
-   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Sfsp;
-   EFI_FILE_PROTOCOL *Root, *File;
+   EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
+   EFI_FILE_PROTOCOL *Root;
+   EFI_FILE_PROTOCOL *File;
    EFI_FILE_INFO *FileInfo;
    UINTN BufferSize;
 
-   Status = gBS->HandleProtocol(Handle,
-                                &gEfiLoadedImageProtocolGuid,
-                                (VOID**)&Lip);
-   FASTFAIL();
-
-   Status = gBS->HandleProtocol(Lip->DeviceHandle,
-                                &gEfiSimpleFileSystemProtocolGuid,
-                                (VOID**)&Sfsp);
-   FASTFAIL();
-
-   Status = Sfsp->OpenVolume(Sfsp, &Root);
-   FASTFAIL();
-
-   Status = Root->Open(Root, &File, Name, EFI_FILE_MODE_READ, 0);
-   FASTFAIL();
-
-   BufferSize = sizeof(EFI_FILE_INFO) + 512;
-   FileInfo = AllocatePool(BufferSize);
-   if (!FileInfo) {
-      File->Close(File);
-      return EFI_OUT_OF_RESOURCES;
+   if (!ImageHandle || !FileName || !FileBuffer || !FileSize) {
+      return EFI_INVALID_PARAMETER;
    }
 
-   Status = File->GetInfo(File, &gEfiFileInfoGuid, &BufferSize, FileInfo);
+   *FileBuffer = NULL;
+   *FileSize = 0;
+
+   Status = gBS->HandleProtocol(
+         ImageHandle,
+         &gEfiLoadedImageProtocolGuid,
+         (VOID**)&LoadedImage
+   );
    if (EFI_ERROR(Status)) {
-      FreePool(FileInfo);
-      File->Close(File);
       return Status;
    }
 
-   *Size = FileInfo->FileSize;
-   FreePool(FileInfo);
+   Status = gBS->HandleProtocol(
+         LoadedImage->DeviceHandle,
+         &gEfiSimpleFileSystemProtocolGuid,
+         (VOID**)&FileSystem
+   );
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
 
-   *Buf = AllocatePool(*Size);
-   if (!*Buf) {
-      File->Close(File);
+   Status = FileSystem->OpenVolume(FileSystem, &Root);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   Status = Root->Open(Root, &File, FileName, EFI_FILE_MODE_READ, 0);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   BufferSize = sizeof(EFI_FILE_INFO) + 256;
+   FileInfo = AllocatePool(BufferSize);
+   if (!FileInfo) {
       return EFI_OUT_OF_RESOURCES;
    }
 
-   Status = File->Read(File, Size, *Buf);
-   File->Close(File);
+   Status = File->GetInfo(
+         File,
+         &gEfiFileInfoGuid,
+         &BufferSize,
+         FileInfo
+   );
+   if (EFI_ERROR(Status)) {
+      FreePool(FileInfo);
+      File->Close(File);
+      Root->Close(Root);
+      return Status;
+   }
 
-   return Status;
+   *FileSize = FileInfo->FileSize;
+   FreePool(FileInfo);
+
+   *FileBuffer = AllocatePool(*FileSize);
+   if (!*FileBuffer) {
+      File->Close(File);
+      Root->Close(Root);
+      return EFI_OUT_OF_RESOURCES;
+   }
+
+   BufferSize = *FileSize;
+   Status = File->Read(File, &BufferSize, *FileBuffer);
+
+   File->Close(File);
+   Root->Close(Root);
+
+   if (EFI_ERROR(Status) || BufferSize != *FileSize) {
+      FreePool(*FileBuffer);
+      *FileBuffer = NULL;
+      *FileSize = 0;
+      return EFI_DEVICE_ERROR;
+   }
+
+   return EFI_SUCCESS;
 }
 
 EFI_STATUS EFIAPI UtAllocatePool(VOID** Buffer, UINTN Size) {

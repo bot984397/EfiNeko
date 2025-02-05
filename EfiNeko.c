@@ -65,7 +65,9 @@ typedef struct {
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *PrevBuffer;
 
    NekoAnim Anim;
+
    BOOLEAN ShouldQuit;
+   BOOLEAN NekoPaused;
 
    EFI_HANDLE ImageHandle;
 } NekoState;
@@ -187,6 +189,45 @@ NekoInitGop(EFI_GRAPHICS_OUTPUT_PROTOCOL **Gop, NekoState *State) {
    return EFI_SUCCESS;
 }
 
+static EFI_STATUS EFIAPI
+NekoPngToGopBlt(UINT8 *ImageData, 
+                UINTN ImageSize, 
+                EFI_GRAPHICS_OUTPUT_BLT_PIXEL **BltBuffer,
+                UINTN *Width,
+                UINTN *Height) {
+   unsigned char *Image = NULL;
+   unsigned int W, H;
+
+   UINT32 Error = lodepng_decode32(&Image, &W, &H, ImageData, ImageSize);
+   if (Error) {
+      return EFI_INVALID_PARAMETER;
+   }
+
+   *Width = W;
+   *Height = H;
+
+   *BltBuffer = AllocatePool(W * H * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
+   if (*BltBuffer == NULL) {
+      lodepng_free(Image);
+      return EFI_OUT_OF_RESOURCES;
+   }
+
+   for (UINTN y = 0; y < H; y++) {
+      for (UINTN x = 0; x < W; x++) {
+         UINTN idx = (y * W + x) * 4;
+
+         (*BltBuffer)[y * W + x].Red = Image[idx];
+         (*BltBuffer)[y * W + x].Green = Image[idx + 1];
+         (*BltBuffer)[y * W + x].Blue = Image[idx + 2];
+         (*BltBuffer)[y * W + x].Reserved = Image[idx + 3];
+      }
+   }
+
+   lodepng_free(Image);
+
+   return EFI_SUCCESS;
+}
+
 EFI_STATUS EFIAPI
 NekoDrawBackground(NekoState *State) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
@@ -237,6 +278,10 @@ NekoDrawCursor(NekoState *State) {
 
 static VOID EFIAPI
 NekoUpdateSpritePos(NekoState *State) {
+   if (State->NekoPaused == TRUE) {
+      return;
+   }
+
    INT32 Dx = (INT32)State->PtrX - (INT32)State->NekoX;
    INT32 Dy = (INT32)State->PtrY - (INT32)State->NekoY;
 
@@ -288,6 +333,11 @@ NekoHandleKeyEvent(EFI_INPUT_KEY Key, NekoState *State) {
    case 'r':
    case 'R':
       NekoHardReset(State);
+      break;
+   case 'p':
+   case 'P':
+      State->NekoPaused = TRUE;
+      break;
    }
 }
 
@@ -329,6 +379,7 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    State.NekoXPrev = 0;
    State.NekoYPrev = 0;
    State.ShouldQuit = FALSE;
+   State.NekoPaused = FALSE;
    State.ImageHandle = ImageHandle;
    
    EC(UtAllocatePool((VOID**)&State.PrevBuffer, CURSOR_WIDTH * CURSOR_HEIGHT
@@ -349,6 +400,45 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    };
 
    NekoDrawBackground(&State);
+
+   /// TEMPORARY BULLSHIT GO
+   
+   UINT8 *ImageData = NULL;
+   UINTN ImageSize;
+   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png", (VOID**)&ImageData, &ImageSize);
+   if (EFI_ERROR(Status)) {
+      Print(L"Failed to load image, status: %r\n", Status);
+      while (TRUE) {}
+   }
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL* BltBuffer = NULL;
+   UINTN ImageWidth;
+   UINTN ImageHeight;
+   
+   Status = NekoPngToGopBlt(ImageData, ImageSize, &BltBuffer, &ImageWidth, &ImageHeight);
+   FreePool(ImageData);
+   if (EFI_ERROR(Status)) {
+      Print(L"Failed to decode PNG\n");
+      return Status;
+   }
+
+   Status = Gop->Blt(
+         Gop,
+         BltBuffer,
+         EfiBltBufferToVideo,
+         0, 0,
+         0, 0,
+         ImageWidth, ImageHeight,
+         ImageWidth * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+   );
+   FreePool(BltBuffer);
+   if (EFI_ERROR(Status)) {
+      Print(L"Blt failed with status: %r\n", Status);
+   }
+
+   while (TRUE) {}
+
+   /// TEMPORARY BULLSHIT STOP
 
    while (State.ShouldQuit == FALSE) {
       UINTN Idx;
