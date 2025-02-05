@@ -1,0 +1,6 @@
+#include "Sprite.h"
+
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL EFIAPI
+SpCreatePixel(UINT8 R, UINT8 G, UINT8 B, UINT8 A) {
+   return (EFI_GRAPHICS_OUTPUT_BLT_PIXEL){ B, G, R, A };
+}
