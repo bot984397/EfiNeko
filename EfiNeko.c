@@ -5,7 +5,6 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Library/BmpSupportLib.h>
 
 #include <Protocol/SimplePointer.h>
 
@@ -21,7 +20,8 @@
 
 #define EC(expr) do { EFI_STATUS Status = (expr); if (EFI_ERROR(Status)) return Status; } while (0)
 
-#define NEKO_ANIM_INTERVAL 8000000
+#define NEKO_ANIM_INTERVAL 900000
+//#define NEKO_ANIM_INTERVAL 8000000
 #define NEKO_INPUT_INTERVAL 50000
 
 #define CURSOR_WIDTH 16
@@ -51,6 +51,8 @@ typedef struct {
 
    INT32 NekoX;
    INT32 NekoY;
+   INT32 NekoXPrev;
+   INT32 NekoYPrev;
 
    INT32 PtrX;
    INT32 PtrY;
@@ -233,13 +235,47 @@ NekoDrawCursor(NekoState *State) {
    State->PtrYPrev = State->PtrY;
 }
 
-VOID EFIAPI
-NekoUpdateSpritePos() {
+static VOID EFIAPI
+NekoUpdateSpritePos(NekoState *State) {
+   INT32 Dx = (INT32)State->PtrX - (INT32)State->NekoX;
+   INT32 Dy = (INT32)State->PtrY - (INT32)State->NekoY;
 
+   UINT32 Dist = (Dx * Dx) + (Dy * Dy);
+
+   if (Dist <= 800) {
+      return;
+   }
+
+   INT32 StepX, StepY;
+    
+   if (ABS(Dx) > ABS(Dy)) {
+      StepX = (Dx > 0) ? 1 : -1;
+      StepY = (Dy * 1000) / ABS(Dx);
+      StepY = (StepY + 500) / 1000;
+   } else {
+      StepY = (Dy > 0) ? 1 : -1;
+      StepX = (Dx * 1000) / ABS(Dy);
+      StepX = (StepX + 500) / 1000;
+   }
+    
+   State->NekoX = (UINT32)((INT32)State->NekoX + StepX * 5);
+   State->NekoY = (UINT32)((INT32)State->NekoY + StepY * 5);
 }
 
 VOID EFIAPI
 NekoDrawSprite(NekoState *State) {
+   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Blk = {0, 0, 0, 0};
+   Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, State->NekoXPrev, State->NekoYPrev,
+            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pix = {255, 255, 255, 0};
+   Gop->Blt(Gop, &Pix, EfiBltVideoFill, 0, 0, State->NekoX, State->NekoY,
+            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+
+   State->NekoXPrev = State->NekoX;
+   State->NekoYPrev = State->NekoY;
 }
 
 VOID EFIAPI
@@ -264,16 +300,6 @@ NekoHandleMouseEvent(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
    NekoUpdateCursorPos(Ptr, State);
 }
 
-static VOID test(EFI_HANDLE ImageHandle) {
-   EFI_STATUS Status;
-   UINT8 *Buffer;
-   UINTN Size;
-   UtLoadFileFromRoot(ImageHandle, L"sample.png", (VOID**)&Buffer, &Size);
-
-   Status = PngDecodeImage(Buffer, Size);
-   Print(L"Decode status: %r", Status);
-}
-
 EFI_STATUS EFIAPI 
 NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    EFI_STATUS Status;
@@ -296,6 +322,12 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    State.PtrY = 0;
    State.PtrXPrev = 0;
    State.PtrYPrev = 0;
+   //State.NekoX = Gop->Mode->Info->HorizontalResolution / 2;
+   //State.NekoY = Gop->Mode->Info->VerticalResolution / 2;
+   State.NekoX = 0;
+   State.NekoY = 0;
+   State.NekoXPrev = 0;
+   State.NekoYPrev = 0;
    State.ShouldQuit = FALSE;
    State.ImageHandle = ImageHandle;
    
@@ -318,17 +350,9 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
    NekoDrawBackground(&State);
 
-   /// TEMPORARY BEGIN
-
-   test(ImageHandle);
-
-   while (TRUE) {}
-
-   /// TEMPORARY END
-
    while (State.ShouldQuit == FALSE) {
       UINTN Idx;
-      Status = gBS->WaitForEvent(2, WaitList, &Idx);
+      Status = gBS->WaitForEvent(3, WaitList, &Idx);
 
       switch (Idx) {
       case 0: // pointer interval
@@ -338,13 +362,14 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
          }
          break;
       case 1: // animation interval
+         NekoUpdateSpritePos(&State);
+         break;
+      case 2: // keyboard input
          EFI_INPUT_KEY Key;
          if (gST->ConIn->ReadKeyStroke(gST->ConIn, &Key) == EFI_SUCCESS) {
             NekoHandleKeyEvent(Key, &State);
          }
          break;
-      case 2: // keyboard input
-
       }
       NekoDrawCursor(&State);
       NekoDrawSprite(&State);

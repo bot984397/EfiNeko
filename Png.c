@@ -1,7 +1,10 @@
 #include <Base.h>
 
+#include <Library/MemoryAllocationLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/UefiLib.h>
+
+#include "Util.h"
 
 #define EC(expr) do { \
    EFI_STATUS Status = (expr); \
@@ -27,12 +30,62 @@ STATIC_ASSERT(sizeof(PLTE_CHUNK) == 3, "PLTE Chunk must be 3 bytes in size");
 
 typedef struct {
    UINT8 *Data;
+   UINTN DataSize;
+   UINTN AllocSize;
    PNG_IHDR Header;
 } PNG_IMAGE;
 
 static BOOLEAN EFIAPI
 PngCheckSignature(UINT8 *Buffer) {
    return Buffer != NULL && *(const UINT64*)Buffer == 0x0A1A0A0D474E5089ULL;
+}
+
+static UINT32 EFIAPI
+PngGetBytesPerPixel(PNG_IHDR *Header) {
+   UINT32 Bpp;
+
+   switch (Header->ColorType) {
+   case 0: // Grayscale
+   case 3: // Indexed Color (Palette)
+      Bpp = Header->BitDepth;
+      break;
+   case 2: // Truecolor (RGB)
+      Bpp = Header->BitDepth * 3;
+      break;
+   case 4: // Grayscale + Alpha
+      Bpp = Header->BitDepth * 2;
+      break;
+   case 6: // Truecolor (RGB) + Alpha
+      Bpp = Header->BitDepth * 4;
+      break;
+   default:
+      Bpp = 0;
+   }
+
+   return Bpp;
+}
+
+static EFI_STATUS EFIAPI
+PngAppendIDAT(PNG_IMAGE *Image, UINT8 *ChunkData, UINT32 ChunkLen) {
+   if (Image->Data == NULL) {
+      Image->Data = AllocatePool(ChunkLen);
+      if (Image->Data == NULL) {
+         return EFI_OUT_OF_RESOURCES;
+      }
+      ZeroMem(Image->Data, ChunkLen);
+   } else {
+      UINT8 *NewData = ReallocatePool(Image->DataSize,
+                                      Image->DataSize + ChunkLen,
+                                      Image->Data);
+      if (NewData == NULL) {
+         return EFI_OUT_OF_RESOURCES;
+      }
+      Image->Data = NewData;
+   }
+
+   CopyMem(Image->Data + Image->DataSize, ChunkData, ChunkLen);
+   Image->DataSize += ChunkLen;
+   return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI
@@ -120,12 +173,18 @@ PngCalculateChunkCRC(UINT8 *ChunkType, UINT8 *ChunkData, UINT32 ChunkLen) {
 }
 
 EFI_STATUS EFIAPI
+PngInflateImage(PNG_IMAGE *Image) {
+   return EFI_SUCCESS;
+}
+
+EFI_STATUS EFIAPI
 PngDecodeImage(UINT8 *Buffer, UINTN Size) { 
    if (Size < 8 || !PngCheckSignature(Buffer)) {
       return EFI_UNSUPPORTED;
    }
 
    PNG_IMAGE Image = {0};
+   UINTN IDatSize = 0;
 
    UINT8 *CurrentChunk = Buffer + 8;
    UINT32 ChunkLen;
@@ -169,6 +228,8 @@ PngDecodeImage(UINT8 *Buffer, UINTN Size) {
             goto ADVANCE;
          }
          EC(PngParseIDAT(ChunkData, &Image));
+         EC(PngAppendIDAT(&Image, ChunkData, ChunkLen));
+         IDatSize += ChunkLen;
       }
 
       else if (CompareMem(ChunkType, (UINT8*)"IEND", 4) == 0) {
@@ -185,7 +246,15 @@ ADVANCE:
       }
    }
 
+   UINT32 Bpp = PngGetBytesPerPixel(&Image.Header);
+   Bpp++;
+
    Print(L"Height: %d, Width: %d\n", Image.Header.Height, Image.Header.Width);
+   Print(L"Image data size: %d, total IDAT size: %d\n", Image.DataSize, IDatSize);
+   Print(L"Color type: %d\n", Image.Header.ColorType);
+   Print(L"First bytes: 0x%02X, 0x%02X\n", Image.Data[0], Image.Data[1]);
+
+   EC(PngInflateImage(&Image));
 
    return EFI_SUCCESS;
 }
