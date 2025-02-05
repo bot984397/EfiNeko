@@ -70,8 +70,6 @@ typedef struct {
 
 EFI_STATUS EFIAPI
 EfiNekoInit(EFINEKO_SETUP *Setup, EFINEKO_STATE *State) {
-   EFI_EVENT EventList[3];
-
    EFI_EVENT MouseEvent;
    EC(gBS->CreateEvent(EVT_TIMER, TPL_CALLBACK, NULL, NULL, &MouseEvent));
    EC(gBS->SetTimer(MouseEvent, TimerPeriodic, NEKO_INPUT_INTERVAL));
@@ -82,25 +80,25 @@ EfiNekoInit(EFINEKO_SETUP *Setup, EFINEKO_STATE *State) {
    EC(gBS->CreateEvent(EVT_TIMER, TPL_CALLBACK, NULL, NULL, &NekoTickEvent));
    EC(gBS->SetTimer(NekoTickEvent, TimerPeriodic, TickSpeed));
 
-   EventList[0] = MouseEvent;
-   EventList[1] = NekoTickEvent;
+   State->WaitList[0] = MouseEvent;
+   State->WaitList[1] = NekoTickEvent;
    if (Setup->EnableKeyboardEvents) {
-      EventList[2] = gST->ConIn->WaitForKey;
+      State->WaitList[2] = gST->ConIn->WaitForKey;
    }
-   State->WaitList[0] = EventList[0];
 
    return EFI_SUCCESS;
 }
 
 EFI_STATUS EFIAPI
 EfiNekoDestroy(EFINEKO_STATE *State) {
-   EFI_EVENT EventList[3];
-   EventList[0] = State->WaitList[0];
+   if (!State) {
+      return EFI_INVALID_PARAMETER;
+   }
 
-   EC(gBS->SetTimer(EventList[0], TimerCancel, 0));
-   EC(gBS->CloseEvent(EventList[0]));
-   EC(gBS->SetTimer(EventList[1], TimerCancel, 0));
-   EC(gBS->CloseEvent(EventList[1]));
+   EC(gBS->SetTimer(State->WaitList[0], TimerCancel, 0));
+   EC(gBS->CloseEvent(State->WaitList[0]));
+   EC(gBS->SetTimer(State->WaitList[1], TimerCancel, 0));
+   EC(gBS->CloseEvent(State->WaitList[1]));
 
    return EFI_SUCCESS;
 }
