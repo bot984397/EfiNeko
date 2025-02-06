@@ -11,6 +11,7 @@
 #include "EfiNeko.h"
 #include "Util.h"
 #include "Sprite.h"
+#include "Anim.h"
 
 #define FASTFAIL() \
    if (EFI_ERROR(Status)) { \
@@ -29,14 +30,6 @@
 #define SPRITE_DIRECTORY   "sprites"
 #define IMAGE_DIRECTORY    "img"
 #define CONFIG_FILE        "EfiNeko.ini"
-
-typedef enum {
-   NEKO_SLEEPING,
-   NEKO_WALKING,
-   NEKO_RUNNING,
-   NEKO_WAITING,
-   NEKO_STARTLED,
-} NekoAnim;
 
 typedef struct {
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Buffer;
@@ -63,8 +56,6 @@ typedef struct {
 
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *PrevBuffer;
 
-   NekoAnim Anim;
-
    BOOLEAN ShouldQuit;
    BOOLEAN NekoPaused;
 
@@ -75,6 +66,13 @@ typedef struct {
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SpsImage;
    UINTN SpsWidth;
    UINTN SpsHeight;
+
+   NekoAnimationType CurrentAnimation;
+   UINT8 CurrentFrame;
+   UINT8 LoopIndex;
+   UINTN TicksElapsed;
+   UINT8 SpriteSheetX;
+   UINT8 SpriteSheetY;
 
    EFI_HANDLE ImageHandle;
 } NekoState;
@@ -293,42 +291,153 @@ NekoDrawCursor(NekoState *State) {
    State->PtrYPrev = State->PtrY;
 }
 
+static NekoAnimationType EFIAPI
+NekoGetDirection(INT32 Dx, INT32 Dy) {
+   if (ABS(Dx) < 2 && ABS(Dy) < 2) {
+      return NEKO_ANIM_IDLE;
+   }
+
+   INT32 Ratio;
+   if (Dx != 0) {
+      Ratio = (Dy * 1000) / Dx;
+   } else {
+      return (Dy > 0) ? NEKO_ANIM_RUN_DOWN : NEKO_ANIM_RUN_UP;
+   }
+
+   const INT32 THRESH_STEEP = 2414;
+   const INT32 THRESH_SHALLOW = 414;
+
+   if (Dx > 0) {
+      if (ABS(Ratio) > THRESH_STEEP) {
+         return (Dy > 0) ? NEKO_ANIM_RUN_DOWN : NEKO_ANIM_RUN_UP;
+      } else if (ABS(Ratio) < THRESH_SHALLOW) {
+         return NEKO_ANIM_RUN_RIGHT;
+      } else {
+         return (Dy > 0) ? NEKO_ANIM_RUN_DOWN_RIGHT : NEKO_ANIM_RUN_UP_RIGHT;
+      }
+   } else {
+      if (ABS(Ratio) > THRESH_STEEP) {
+         return (Dy > 0) ? NEKO_ANIM_RUN_DOWN : NEKO_ANIM_RUN_UP;
+      } else if (ABS(Ratio) < THRESH_SHALLOW) {
+         return NEKO_ANIM_RUN_LEFT;
+      } else {
+         return (Dy > 0) ? NEKO_ANIM_RUN_DOWN_LEFT : NEKO_ANIM_RUN_UP_LEFT;
+      }
+   }
+}
+
+static UINT32 EFIAPI
+NekoIntSqrt(UINT32 Value) {
+    if (Value <= 1) return Value;
+    
+    UINT32 Result = 0;
+    UINT32 Bit = 1UL << 30;  // Start with highest power of 4 <= Value
+    
+    while (Bit > Value) {
+        Bit >>= 2;
+    }
+    
+    while (Bit != 0) {
+        if (Value >= Result + Bit) {
+            Value -= Result + Bit;
+            Result = (Result >> 1) + Bit;
+        } else {
+            Result >>= 1;
+        }
+        Bit >>= 2;
+    }
+    
+    return Result;
+}
+
+static VOID EFIAPI
+NekoUpdateAnimation(NekoState *State) {
+   const AnimationSequence *Sequence = 
+      &AnimationSequences[State->CurrentAnimation];
+   const AnimationFrame *Frame = &Sequence->Frames[State->CurrentFrame];
+
+   State->TicksElapsed += 1;
+
+   if (State->TicksElapsed == Frame->Duration) {
+      if (Frame->Flags == NEKO_FRAME_FLAG_LOOP_END) {
+         if (State->LoopIndex < Frame->LoopIterations || Frame->LoopIterations == 0) {
+            for (UINTN i = 0; i < Sequence->FrameCount; i++) {
+               if (Sequence->Frames[i].Flags == NEKO_FRAME_FLAG_LOOP_BEGIN) {
+                  State->CurrentFrame = i;
+                  State->TicksElapsed = 0;
+                  break;
+               }
+            }
+         } else {
+            State->CurrentFrame++;
+            State->TicksElapsed = 0;
+         }
+      } else {
+         State->CurrentFrame++;
+         State->TicksElapsed = 0;
+      }
+
+      if (State->CurrentFrame >= Sequence->FrameCount) {
+         State->CurrentFrame = 0;
+         State->TicksElapsed = 0;
+      }
+   }
+
+   const AnimationSequence *NewSequence = 
+      &AnimationSequences[State->CurrentAnimation];
+   const AnimationFrame *NewFrame = &NewSequence->Frames[State->CurrentFrame];
+
+   State->SpriteSheetX = NewFrame->SpriteSheetX;
+   State->SpriteSheetY = NewFrame->SpriteSheetY;
+}
+
 static VOID EFIAPI
 NekoUpdateSpritePos(NekoState *State) {
    if (State->NekoPaused == TRUE) {
       return;
    }
 
-   INT32 Dx = (INT32)State->PtrX - (INT32)State->NekoX;
-   INT32 Dy = (INT32)State->PtrY - (INT32)State->NekoY;
+   INT32 Dx = ((INT32)State->PtrX - State->CursorWidth / 2) - 
+      (INT32)State->NekoX;
+   INT32 Dy = ((INT32)State->PtrY - State->CursorHeight / 2) - 
+      (INT32)State->NekoY;
 
    UINT32 Dist = (Dx * Dx) + (Dy * Dy);
 
    if (Dist <= 1600) {
-      return;
+      Dx = 0;
+      Dy = 0;
    }
 
-   INT32 StepX, StepY;
-    
-   if (ABS(Dx) > ABS(Dy)) {
-      StepX = (Dx > 0) ? 1 : -1;
-      StepY = (Dy * 1000) / ABS(Dx);
-      StepY = (StepY + 500) / 1000;
-   } else {
-      StepY = (Dy > 0) ? 1 : -1;
-      StepX = (Dx * 1000) / ABS(Dy);
-      StepX = (StepX + 500) / 1000;
+   NekoAnimationType AnimationType = NekoGetDirection(Dx, Dy);
+   if (AnimationType != State->CurrentAnimation) {
+      State->TicksElapsed = 0;
+      State->CurrentFrame = 0;
+      State->CurrentAnimation = AnimationType;
    }
-    
-   State->NekoX = (UINT32)((INT32)State->NekoX + StepX * 5);
-   State->NekoY = (UINT32)((INT32)State->NekoY + StepY * 5);
+
+   NekoUpdateAnimation(State);
+
+   const INT32 NEKO_SPEED = 5;
+
+   INT32 Length = (INT32)NekoIntSqrt(Dist);
+   if (Length > 0) {
+      INT32 StepX = (Dx * NEKO_SPEED * 1000) / Length;
+      INT32 StepY = (Dy * NEKO_SPEED * 1000) / Length;
+        
+      State->NekoX = (UINT32)((INT32)State->NekoX + (StepX + 500) / 1000);
+      State->NekoY = (UINT32)((INT32)State->NekoY + (StepY + 500) / 1000);
+   }
 }
 
 VOID EFIAPI
-NekoDrawSprite2(NekoState *State, UINT8 SpriteX, UINT8 SpriteY, INT32 DestX, INT32 DestY) {
+NekoDrawSprite(NekoState *State) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
    #define SPRITE_SIZE 32
    #define BORDER_SIZE 1
+
+   UINT8 SpriteX = State->SpriteSheetX;
+   UINT8 SpriteY = State->SpriteSheetY;
 
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Blk = {0, 0, 0, 0};
    Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, 
@@ -380,10 +489,6 @@ NekoHandleKeyEvent(EFI_INPUT_KEY Key, NekoState *State) {
 
 VOID EFIAPI
 NekoHandleMouseEvent(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
-   if (Ptr.LeftButton == TRUE) {
-      Print(L"Left button pressed\n");
-   } 
-
    NekoUpdateCursorPos(Ptr, State);
 }
 
@@ -395,16 +500,20 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
    NekoState State = {0};
 
-   if (NekoInitSpp(&Spp) != EFI_SUCCESS) {
+   Status = NekoInitSpp(&Spp);
+   if (EFI_ERROR(Status)) {
       return Status;
    }
 
-   if (NekoInitGop(&Gop, &State) != EFI_SUCCESS) {
+   Status = NekoInitGop(&Gop, &State);
+   if (EFI_ERROR(Status)) {
       return Status;
    }
 
    State.Spp = Spp;
    State.Gop = Gop;
+   State.SpriteSheetX = 0;
+   State.SpriteSheetY = 0;
    State.PtrX = 0;
    State.PtrY = 0;
    State.PtrXPrev = 0;
@@ -505,7 +614,7 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
          }
          break;
       }
-      NekoDrawSprite2(&State, 3, 1, 100, 100);
+      NekoDrawSprite(&State);
       NekoDrawCursor(&State);
    }
 
