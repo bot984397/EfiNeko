@@ -11,7 +11,6 @@
 #include "EfiNeko.h"
 #include "Util.h"
 #include "Sprite.h"
-#include "Png.h"
 
 #define FASTFAIL() \
    if (EFI_ERROR(Status)) { \
@@ -20,7 +19,7 @@
 
 #define EC(expr) do { EFI_STATUS Status = (expr); if (EFI_ERROR(Status)) return Status; } while (0)
 
-#define NEKO_ANIM_INTERVAL 900000
+#define NEKO_ANIM_INTERVAL 700000
 //#define NEKO_ANIM_INTERVAL 8000000
 #define NEKO_INPUT_INTERVAL 50000
 
@@ -68,6 +67,14 @@ typedef struct {
 
    BOOLEAN ShouldQuit;
    BOOLEAN NekoPaused;
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *CursorImage;
+   UINTN CursorWidth;
+   UINTN CursorHeight;
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SpsImage;
+   UINTN SpsWidth;
+   UINTN SpsHeight;
 
    EFI_HANDLE ImageHandle;
 } NekoState;
@@ -212,14 +219,29 @@ NekoPngToGopBlt(UINT8 *ImageData,
       return EFI_OUT_OF_RESOURCES;
    }
 
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Filter;
+   Filter.Red = Image[0];
+   Filter.Green = Image[1];
+   Filter.Blue = Image[2];
+   Filter.Reserved = Image[3];
+
    for (UINTN y = 0; y < H; y++) {
       for (UINTN x = 0; x < W; x++) {
          UINTN idx = (y * W + x) * 4;
 
-         (*BltBuffer)[y * W + x].Red = Image[idx];
-         (*BltBuffer)[y * W + x].Green = Image[idx + 1];
-         (*BltBuffer)[y * W + x].Blue = Image[idx + 2];
-         (*BltBuffer)[y * W + x].Reserved = Image[idx + 3];
+         if (Image[idx + 0] == Filter.Red && 
+             Image[idx + 1] == Filter.Green &&
+             Image[idx + 2] == Filter.Blue) {
+            (*BltBuffer)[y * W + x].Red = 0;
+            (*BltBuffer)[y * W + x].Green = 0;
+            (*BltBuffer)[y * W + x].Blue = 0;
+            (*BltBuffer)[y * W + x].Reserved = 0;
+         } else {
+            (*BltBuffer)[y * W + x].Red = Image[idx];
+            (*BltBuffer)[y * W + x].Green = Image[idx + 1];
+            (*BltBuffer)[y * W + x].Blue = Image[idx + 2];
+            (*BltBuffer)[y * W + x].Reserved = Image[idx + 3];
+         }
       }
    }
 
@@ -256,21 +278,16 @@ VOID EFIAPI
 NekoDrawCursor(NekoState *State) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
 
-   /*
-   Gop->Blt(Gop, State->PrevBuffer, EfiBltBufferToVideo, 0, 0,
-            State->PtrXPrev, State->PtrYPrev, CURSOR_WIDTH, CURSOR_HEIGHT, 0);
-
-   Gop->Blt(Gop, State->PrevBuffer, EfiBltVideoToBltBuffer, 0, 0,
-            State->PtrX, State->PtrY, CURSOR_WIDTH, CURSOR_HEIGHT, 0);
-   */
-
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Blk = {0, 0, 0, 0};
-   Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, State->PtrXPrev, State->PtrYPrev,
-            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+   Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, 
+            State->PtrXPrev, State->PtrYPrev,
+            State->CursorWidth, State->CursorHeight,
+            State->CursorWidth * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
 
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pix = {255, 255, 255, 0};
-   Gop->Blt(Gop, &Pix, EfiBltVideoFill, 0, 0, State->PtrX, State->PtrY,
-            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+   Gop->Blt(Gop, State->CursorImage, EfiBltBufferToVideo, 0, 0,
+            State->PtrX, State->PtrY,
+            State->CursorWidth, State->CursorHeight,
+            State->CursorWidth * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
 
    State->PtrXPrev = State->PtrX;
    State->PtrYPrev = State->PtrY;
@@ -287,7 +304,7 @@ NekoUpdateSpritePos(NekoState *State) {
 
    UINT32 Dist = (Dx * Dx) + (Dy * Dy);
 
-   if (Dist <= 800) {
+   if (Dist <= 1600) {
       return;
    }
 
@@ -308,16 +325,36 @@ NekoUpdateSpritePos(NekoState *State) {
 }
 
 VOID EFIAPI
-NekoDrawSprite(NekoState *State) {
+NekoDrawSprite2(NekoState *State, UINT8 SpriteX, UINT8 SpriteY, INT32 DestX, INT32 DestY) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
+   #define SPRITE_SIZE 32
+   #define BORDER_SIZE 1
 
    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Blk = {0, 0, 0, 0};
-   Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, State->NekoXPrev, State->NekoYPrev,
-            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+   Gop->Blt(Gop, &Blk, EfiBltVideoFill, 0, 0, 
+            State->NekoXPrev, State->NekoYPrev,
+            SPRITE_SIZE, SPRITE_SIZE,
+            SPRITE_SIZE * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));
 
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pix = {255, 255, 255, 0};
-   Gop->Blt(Gop, &Pix, EfiBltVideoFill, 0, 0, State->NekoX, State->NekoY,
-            CURSOR_WIDTH, CURSOR_HEIGHT, 0);
+   for (UINT32 y = 0; y < SPRITE_SIZE; y++) {
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL *RowStart = &State->SpsImage[
+         ((SpriteY * (SPRITE_SIZE + BORDER_SIZE) + y) * State->SpsWidth) + 
+         (SpriteX * (SPRITE_SIZE + BORDER_SIZE))
+      ];
+
+      Gop->Blt(
+         Gop,
+         RowStart,
+         EfiBltBufferToVideo,
+         0,
+         0,
+         State->NekoX,
+         State->NekoY + y,
+         SPRITE_SIZE,
+         1,
+         State->SpsWidth
+      );
+   }
 
    State->NekoXPrev = State->NekoX;
    State->NekoYPrev = State->NekoY;
@@ -399,46 +436,53 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
       gST->ConIn->WaitForKey
    };
 
-   NekoDrawBackground(&State);
-
-   /// TEMPORARY BULLSHIT GO
-   
-   UINT8 *ImageData = NULL;
-   UINTN ImageSize;
-   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png", (VOID**)&ImageData, &ImageSize);
+   UINT8 *CursorData = NULL;
+   UINTN CursorSize;
+   Status = UtLoadFileFromRoot(ImageHandle, L"cursor.png", 
+                               (VOID**)&CursorData, &CursorSize);
    if (EFI_ERROR(Status)) {
-      Print(L"Failed to load image, status: %r\n", Status);
-      while (TRUE) {}
-   }
-
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL* BltBuffer = NULL;
-   UINTN ImageWidth;
-   UINTN ImageHeight;
-   
-   Status = NekoPngToGopBlt(ImageData, ImageSize, &BltBuffer, &ImageWidth, &ImageHeight);
-   FreePool(ImageData);
-   if (EFI_ERROR(Status)) {
-      Print(L"Failed to decode PNG\n");
       return Status;
    }
 
-   Status = Gop->Blt(
-         Gop,
-         BltBuffer,
-         EfiBltBufferToVideo,
-         0, 0,
-         0, 0,
-         ImageWidth, ImageHeight,
-         ImageWidth * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
-   );
-   FreePool(BltBuffer);
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *CurBltBuffer = NULL;
+   UINTN CursorWidth;
+   UINTN CursorHeight;
+
+   Status = NekoPngToGopBlt(CursorData, CursorSize, &CurBltBuffer,
+                            &CursorWidth, &CursorHeight);
+   FreePool(CursorData);
    if (EFI_ERROR(Status)) {
-      Print(L"Blt failed with status: %r\n", Status);
+      return Status;
    }
 
-   while (TRUE) {}
+   State.CursorImage = CurBltBuffer;
+   State.CursorWidth = CursorWidth;
+   State.CursorHeight = CursorHeight;
 
-   /// TEMPORARY BULLSHIT STOP
+   UINT8 *SpsData = NULL;
+   UINTN SpsSize;
+   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png",
+                               (VOID**)&SpsData, &SpsSize);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SpsBltBuffer = NULL;
+   UINTN SpsWidth;
+   UINTN SpsHeight;
+
+   Status = NekoPngToGopBlt(SpsData, SpsSize, &SpsBltBuffer, 
+                            &SpsWidth, &SpsHeight);
+   FreePool(SpsData);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   State.SpsImage = SpsBltBuffer;
+   State.SpsWidth = SpsWidth;
+   State.SpsHeight = SpsHeight;
+
+   NekoDrawBackground(&State);
 
    while (State.ShouldQuit == FALSE) {
       UINTN Idx;
@@ -461,8 +505,8 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
          }
          break;
       }
+      NekoDrawSprite2(&State, 3, 1, 100, 100);
       NekoDrawCursor(&State);
-      NekoDrawSprite(&State);
    }
 
    return EFI_SUCCESS;
