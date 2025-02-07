@@ -1,6 +1,7 @@
 #include <Uefi.h>
 
 #include <Library/UefiLib.h>
+#include <Library/BaseLib.h>
 #include <Library/UefiApplicationEntryPoint.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
@@ -12,6 +13,9 @@
 #include "EfiNeko.h"
 #include "Util.h"
 #include "Anim.h"
+
+#include "Cursor.h"
+#include "Sprite.h"
 
 #define FASTFAIL() \
    if (EFI_ERROR(Status)) { \
@@ -52,8 +56,6 @@ typedef struct {
 
    INT32 ScrX;
    INT32 ScrY;
-
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *PrevBuffer;
 
    BOOLEAN ShouldQuit;
    BOOLEAN NekoPaused;
@@ -359,7 +361,8 @@ NekoUpdateAnimation(NekoState *State) {
 
    if (State->TicksElapsed == Frame->Duration) {
       if (Frame->Flags == NEKO_FRAME_FLAG_LOOP_END) {
-         if (State->LoopIndex < Frame->LoopIterations || Frame->LoopIterations == 0) {
+         if (State->LoopIndex < Frame->LoopIterations - 1 
+               || Frame->LoopIterations == 0) {
             for (UINTN i = State->CurrentFrame; i >= 0; i--) {
                if (Sequence->Frames[i].Flags == NEKO_FRAME_FLAG_LOOP_BEGIN) {
                   State->CurrentFrame = i;
@@ -434,18 +437,6 @@ NekoUpdateSpritePos(NekoState *State) {
          State->CurrentAnimation = AnimationType;
       }
    }
-
-   /*
-   if (AnimationType != State->CurrentAnimation) {
-      if (State->CurrentAnimation == NEKO_ANIM_IDLE) {
-         AnimationType = NEKO_ANIM_STARTLED;
-      }
-      State->TicksElapsed = 0;
-      State->CurrentFrame = 0;
-      State->LoopIndex = 0;
-      State->CurrentAnimation = AnimationType;
-   }
-   */
 
    if (State->NekoX == 0) {
       State->CurrentAnimation = NEKO_ANIM_SCRATCH_LEFT;
@@ -537,16 +528,95 @@ NekoHandleMouseEvent(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
    NekoUpdateCursorPos(Ptr, State);
 }
 
-EFI_STATUS EFIAPI 
-NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+static VOID EFIAPI
+NekoStrnCpy(CHAR16 *Dest, CONST CHAR16 *Source, UINTN Count) {
+   while (Count > 0 && *Source != L'\0') {
+      *Dest++ = *Source++;
+      Count--;
+   }
+   while (Count > 0) {
+      *Dest++ = L'\0';
+      Count--;
+   }
+}
+
+static INTN EFIAPI
+NekoStrCmp(CONST CHAR16 *Str1, CONST CHAR16 *Str2) {
+   while (*Str1 && (*Str1 == *Str2)) {
+      Str1++;
+      Str2++;
+   }
+   return (INTN)(*Str1 - *Str2);
+}
+
+static UINT32 EFIAPI 
+NekoGetArgc(CHAR16 *CmdLine, UINTN CmdLineLength) {
+   UINTN Count = 1;
+   for (UINTN i = 0; i < CmdLineLength; i++) {
+      if (CmdLine[i] == L' ') {
+         Count++;
+
+         while (i < CmdLineLength && CmdLine[i] == L' ') {
+            i++;
+         }
+      }
+   }
+   return Count;
+}
+
+static CHAR16** EFIAPI
+NekoGetArgv(CHAR16 *CmdLine, UINTN CmdLineLength, UINTN Argc) {
+   CHAR16 **Argv = AllocateZeroPool((Argc + 1) * sizeof(CHAR16*));
+   if (Argv == NULL) {
+      return NULL;
+   }
+
+   UINTN ArgvIdx = 0;
+   UINTN Start = 0;
+   BOOLEAN InArg = FALSE;
+
+   for (UINTN i = 0; i <= CmdLineLength; i++) {
+      if (CmdLine[i] == L' ' || CmdLine[i] == L'\0') {
+         if (InArg) {
+            UINTN ArgLen = i - Start;
+            Argv[ArgvIdx] = AllocateZeroPool((ArgLen + 1) * sizeof(CHAR16));
+            if (Argv[ArgvIdx] == NULL) {
+               while (ArgvIdx > 0) {
+                  FreePool(Argv[--ArgvIdx]);
+               }
+               FreePool(Argv);
+               return NULL;
+            }
+
+            NekoStrnCpy(Argv[ArgvIdx], CmdLine + Start, ArgLen);
+            Argv[ArgvIdx][ArgLen] = L'\0';
+
+            ArgvIdx++;
+            InArg = FALSE;
+         }
+
+         while (CmdLine[i] == L' ') {
+            i++;
+         }
+
+         Start = i;
+      }
+
+      if (CmdLine[i] != L' ' && CmdLine[i] != L'\0') {
+         if (!InArg) {
+            Start = i;
+            InArg = TRUE;
+         }
+      }
+   }
+
+   return Argv;
+}
+
+static EFI_STATUS EFIAPI
+NekoParseCommandLine(EFI_HANDLE ImageHandle, UINTN *Argc, CHAR16 ***Argv) {
    EFI_STATUS Status;
-   EFI_SIMPLE_POINTER_PROTOCOL *Spp = NULL;
-   EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = NULL;
-   
    EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
-   CHAR16 *CmdLine;
-   //UINTN Argc;
-   //CHAR16 **Argv;
 
    Status = gBS->HandleProtocol(
          ImageHandle,
@@ -557,40 +627,151 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
       return Status;
    }
 
-   CmdLine = (CHAR16*)LoadedImage->LoadOptions;
-   CmdLine++;
+   CHAR16 *LoadOptions = (CHAR16*)LoadedImage->LoadOptions;
+   UINTN LoadOptionsSize = LoadedImage->LoadOptionsSize;
+
+   *Argc = NekoGetArgc(LoadOptions, LoadOptionsSize);
+   *Argv = NekoGetArgv(LoadOptions, LoadOptionsSize, *Argc);
+
+   return EFI_SUCCESS;
+}
+
+static VOID EFIAPI
+NekoInitDefaultState(EFI_HANDLE ImageHandle, NekoState *State) {
+   State->SpriteSheetX = 0;
+   State->SpriteSheetY = 0;
+   State->PtrX = 0;
+   State->PtrY = 0;
+   State->PtrXPrev = 0;
+   State->PtrYPrev = 0;
+   State->NekoX = 0;
+   State->NekoY = 0;
+   State->NekoXPrev = 0;
+   State->NekoYPrev = 0;
+   State->LoopIndex = 0;
+   State->ShouldQuit = FALSE;
+   State->NekoPaused = FALSE;
+   State->ImageHandle = ImageHandle;
+}
+
+EFI_STATUS EFIAPI
+NekoLoadCursor(UINTN Argc, CHAR16 **Argv, NekoState *State) {
+   EFI_STATUS Status;
+   CHAR16 *CursorPath = NULL;
+   UINT8 *CursorPng;
+   UINTN CursorSize;
+   BOOLEAN MemLoad = FALSE;
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *CursorBltBuffer = NULL;
+   UINTN CursorWidth;
+   UINTN CursorHeight;
+
+   for (UINTN i = 0; i < Argc; i++) {
+      if (NekoStrCmp(Argv[i], L"-c") == 0 || 
+          NekoStrCmp(Argv[i], L"--cursor") == 0) {
+         if (Argv[i + 1] != NULL) {
+            CursorPath = Argv[i + 1];
+         }
+      }
+   }
+   if (CursorPath == NULL || UtLoadFileFromRoot(State->ImageHandle,
+            CursorPath, (VOID**)&CursorPng, &CursorSize) != EFI_SUCCESS) {
+      CursorPng = CursorMemPng;
+      CursorSize = CursorMemPngLen;
+      MemLoad = TRUE;
+   }
+
+   Status = NekoPngToGopBlt(CursorPng, CursorSize, &CursorBltBuffer,
+                            &CursorWidth, &CursorHeight);
+   if (MemLoad == FALSE) {
+      FreePool(CursorPng);
+   }
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   State->CursorImage = CursorBltBuffer;
+   State->CursorWidth = CursorWidth;
+   State->CursorHeight = CursorHeight;
+
+   return EFI_SUCCESS;
+}
+
+EFI_STATUS EFIAPI
+NekoLoadSpriteSheet(UINTN Argc, CHAR16 **Argv, NekoState *State) {
+   EFI_STATUS Status;
+   CHAR16 *SpriteSheetPath = NULL;
+   UINT8 *SpriteSheetPng;
+   UINTN SpriteSheetSize;
+   BOOLEAN MemLoad = FALSE;
+
+   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SpriteSheetBltBuffer = NULL;
+   UINTN SpriteSheetWidth;
+   UINTN SpriteSheetHeight;
+
+   for (UINTN i = 0; i < Argc; i++) {
+      if (NekoStrCmp(Argv[i], L"-s") == 0 ||
+          NekoStrCmp(Argv[i], L"--sprite") == 0) {
+         if (Argv[i + 1] != NULL) {
+            SpriteSheetPath = Argv[i + 1];
+         }
+      }
+   }
+   if (SpriteSheetPath == NULL || UtLoadFileFromRoot(State->ImageHandle,
+            SpriteSheetPath, (VOID**)&SpriteSheetPng, 
+            &SpriteSheetSize) != EFI_SUCCESS) {
+      SpriteSheetPng = NekoMemPng;
+      SpriteSheetSize = NekoMemPngLen;
+      MemLoad = TRUE;
+   }
+
+   Status = NekoPngToGopBlt(SpriteSheetPng, SpriteSheetSize,
+         &SpriteSheetBltBuffer, &SpriteSheetWidth, &SpriteSheetHeight);
+   if (MemLoad == FALSE) {
+      FreePool(SpriteSheetPng);
+   }
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   State->SpsImage = SpriteSheetBltBuffer;
+   State->SpsWidth = SpriteSheetWidth;
+   State->SpsHeight = SpriteSheetHeight;
+
+   return EFI_SUCCESS;
+}
+
+EFI_STATUS EFIAPI 
+NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+   EFI_STATUS Status;
+   
+   UINTN Argc;
+   CHAR16 **Argv;
+   Status = NekoParseCommandLine(ImageHandle, &Argc, &Argv);
 
    NekoState State = {0};
 
-   Status = NekoInitSpp(&Spp);
+   Status = NekoInitSpp(&State.Spp);
    if (EFI_ERROR(Status)) {
       return Status;
    }
 
-   Status = NekoInitGop(&Gop, &State);
+   Status = NekoInitGop(&State.Gop, &State);
    if (EFI_ERROR(Status)) {
       return Status;
    }
 
-   State.Spp = Spp;
-   State.Gop = Gop;
-   State.SpriteSheetX = 0;
-   State.SpriteSheetY = 0;
-   State.PtrX = 0;
-   State.PtrY = 0;
-   State.PtrXPrev = 0;
-   State.PtrYPrev = 0;
-   State.NekoX = 0;
-   State.NekoY = 0;
-   State.NekoXPrev = 0;
-   State.NekoYPrev = 0;
-   State.LoopIndex = 0;
-   State.ShouldQuit = FALSE;
-   State.NekoPaused = FALSE;
-   State.ImageHandle = ImageHandle;
-   
-   EC(UtAllocatePool((VOID**)&State.PrevBuffer, CURSOR_WIDTH * CURSOR_HEIGHT
-            * sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL)));
+   NekoInitDefaultState(ImageHandle, &State);
+
+   Status = NekoLoadCursor(Argc, Argv, &State);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   Status = NekoLoadSpriteSheet(Argc, Argv, &State);
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
 
    EFI_EVENT MouseEvent;
    EC(gBS->CreateEvent(EVT_TIMER, TPL_CALLBACK, NULL, NULL, &MouseEvent));
@@ -606,52 +787,6 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
       gST->ConIn->WaitForKey
    };
 
-   UINT8 *CursorData = NULL;
-   UINTN CursorSize;
-   Status = UtLoadFileFromRoot(ImageHandle, L"cursor.png", 
-                               (VOID**)&CursorData, &CursorSize);
-   if (EFI_ERROR(Status)) {
-      return Status;
-   }
-
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *CurBltBuffer = NULL;
-   UINTN CursorWidth;
-   UINTN CursorHeight;
-
-   Status = NekoPngToGopBlt(CursorData, CursorSize, &CurBltBuffer,
-                            &CursorWidth, &CursorHeight);
-   FreePool(CursorData);
-   if (EFI_ERROR(Status)) {
-      return Status;
-   }
-
-   State.CursorImage = CurBltBuffer;
-   State.CursorWidth = CursorWidth;
-   State.CursorHeight = CursorHeight;
-
-   UINT8 *SpsData = NULL;
-   UINTN SpsSize;
-   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png",
-                               (VOID**)&SpsData, &SpsSize);
-   if (EFI_ERROR(Status)) {
-      return Status;
-   }
-
-   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SpsBltBuffer = NULL;
-   UINTN SpsWidth;
-   UINTN SpsHeight;
-
-   Status = NekoPngToGopBlt(SpsData, SpsSize, &SpsBltBuffer, 
-                            &SpsWidth, &SpsHeight);
-   FreePool(SpsData);
-   if (EFI_ERROR(Status)) {
-      return Status;
-   }
-
-   State.SpsImage = SpsBltBuffer;
-   State.SpsWidth = SpsWidth;
-   State.SpsHeight = SpsHeight;
-
    NekoDrawBackground(&State);
 
    while (State.ShouldQuit == FALSE) {
@@ -661,7 +796,7 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
       switch (Idx) {
       case 0: // pointer interval
          EFI_SIMPLE_POINTER_STATE Ptr;
-         if (Spp->GetState(Spp, &Ptr) == EFI_SUCCESS) {
+         if (State.Spp->GetState(State.Spp, &Ptr) == EFI_SUCCESS) {
             NekoHandleMouseEvent(Ptr, &State);
          }
          break;
