@@ -411,12 +411,41 @@ NekoUpdateSpritePos(NekoState *State) {
    }
 
    NekoAnimationType AnimationType = NekoGetDirection(Dx, Dy);
+
+   const AnimationSequence *Sequence = 
+      &AnimationSequences[State->CurrentAnimation];
+   const AnimationFrame *Frame = &Sequence->Frames[State->CurrentFrame];
+
+   if (Sequence->Flags & NEKO_ANIM_FLAG_NO_INTERRUPT) {
+      if (State->CurrentFrame == Sequence->FrameCount - 1 &&
+          State->TicksElapsed == Frame->Duration - 1) {
+         State->TicksElapsed = 0;
+         State->CurrentFrame = 0;
+         State->LoopIndex = 0;
+         State->CurrentAnimation = AnimationType;
+      }
+   } else {
+      if (AnimationType != State->CurrentAnimation) {
+         if (State->CurrentAnimation == NEKO_ANIM_IDLE) {
+            AnimationType = NEKO_ANIM_STARTLED;
+         }
+         State->TicksElapsed = 0;
+         State->CurrentFrame = 0;
+         State->CurrentAnimation = AnimationType;
+      }
+   }
+
+   /*
    if (AnimationType != State->CurrentAnimation) {
+      if (State->CurrentAnimation == NEKO_ANIM_IDLE) {
+         AnimationType = NEKO_ANIM_STARTLED;
+      }
       State->TicksElapsed = 0;
       State->CurrentFrame = 0;
       State->LoopIndex = 0;
       State->CurrentAnimation = AnimationType;
    }
+   */
 
    if (State->NekoX == 0) {
       State->CurrentAnimation = NEKO_ANIM_SCRATCH_LEFT;
@@ -429,6 +458,10 @@ NekoUpdateSpritePos(NekoState *State) {
    }
 
    NekoUpdateAnimation(State);
+
+   if (State->CurrentAnimation == NEKO_ANIM_STARTLED) {
+      return;
+   }
 
    const INT32 NEKO_SPEED = 5;
 
@@ -598,7 +631,7 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
    UINT8 *SpsData = NULL;
    UINTN SpsSize;
-   Status = UtLoadFileFromRoot(ImageHandle, L"dog.png",
+   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png",
                                (VOID**)&SpsData, &SpsSize);
    if (EFI_ERROR(Status)) {
       return Status;

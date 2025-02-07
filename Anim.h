@@ -6,7 +6,7 @@
 #define NEKO_FRAME_FLAG_LOOP_BEGIN  0x01
 #define NEKO_FRAME_FLAG_LOOP_END    0x02
 
-#define NEKO_ANIM_FLAG_INTERRUPT_OK 0x01
+#define NEKO_ANIM_FLAG_NO_INTERRUPT 0x01
 
 // a frame marked with NEKO_FRAME_FLAG_LOOP_BEGIN must specify a number of
 // loop iterations. 0 loop iterations translates to an infinite loop.
@@ -21,6 +21,7 @@ typedef struct {
 typedef struct {
    AnimationFrame *Frames;
    UINT8 FrameCount;
+   UINT8 Flags;
 } AnimationSequence;
 
 typedef enum {
@@ -117,59 +118,73 @@ static AnimationFrame ScratchDownFrames[] = {
 static const AnimationSequence AnimationSequences[] = {
    [NEKO_ANIM_IDLE] = {
       .Frames = IdleFrames,
-      .FrameCount = FRAME_COUNT(IdleFrames)
+      .FrameCount = FRAME_COUNT(IdleFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_STARTLED] = {
       .Frames = StartledFrames,
-      .FrameCount = FRAME_COUNT(StartledFrames)
+      .FrameCount = FRAME_COUNT(StartledFrames),
+      .Flags = NEKO_ANIM_FLAG_NO_INTERRUPT
    },
    [NEKO_ANIM_RUN_UP] = {
       .Frames = RunUpFrames,
-      .FrameCount = FRAME_COUNT(RunUpFrames)
+      .FrameCount = FRAME_COUNT(RunUpFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_UP_RIGHT] = {
       .Frames = RunUpRightFrames,
-      .FrameCount = FRAME_COUNT(RunUpRightFrames)
+      .FrameCount = FRAME_COUNT(RunUpRightFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_RIGHT] = {
       .Frames = RunRightFrames,
-      .FrameCount = FRAME_COUNT(RunRightFrames)
+      .FrameCount = FRAME_COUNT(RunRightFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_DOWN_RIGHT] = {
       .Frames = RunDownRightFrames,
-      .FrameCount = FRAME_COUNT(RunDownRightFrames)
+      .FrameCount = FRAME_COUNT(RunDownRightFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_DOWN] = {
       .Frames = RunDownFrames,
-      .FrameCount = FRAME_COUNT(RunDownFrames)
+      .FrameCount = FRAME_COUNT(RunDownFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_DOWN_LEFT] = {
       .Frames = RunDownLeftFrames,
-      .FrameCount = FRAME_COUNT(RunDownLeftFrames)
+      .FrameCount = FRAME_COUNT(RunDownLeftFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_LEFT] = {
       .Frames = RunLeftFrames,
-      .FrameCount = FRAME_COUNT(RunLeftFrames)
+      .FrameCount = FRAME_COUNT(RunLeftFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_RUN_UP_LEFT] = {
       .Frames = RunUpLeftFrames,
-      .FrameCount = FRAME_COUNT(RunUpLeftFrames)
+      .FrameCount = FRAME_COUNT(RunUpLeftFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_SCRATCH_UP] = {
       .Frames = ScratchUpFrames,
-      .FrameCount = FRAME_COUNT(ScratchUpFrames)
+      .FrameCount = FRAME_COUNT(ScratchUpFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_SCRATCH_RIGHT] = {
       .Frames = ScratchRightFrames,
-      .FrameCount = FRAME_COUNT(ScratchRightFrames)
+      .FrameCount = FRAME_COUNT(ScratchRightFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_SCRATCH_DOWN] = {
       .Frames = ScratchDownFrames,
-      .FrameCount = FRAME_COUNT(ScratchDownFrames)
+      .FrameCount = FRAME_COUNT(ScratchDownFrames),
+      .Flags = 0
    },
    [NEKO_ANIM_SCRATCH_LEFT] = {
       .Frames = ScratchLeftFrames,
-      .FrameCount = FRAME_COUNT(ScratchLeftFrames)
+      .FrameCount = FRAME_COUNT(ScratchLeftFrames),
+      .Flags = 0
    }
 };
 
