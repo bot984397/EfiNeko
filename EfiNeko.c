@@ -7,10 +7,10 @@
 #include <Library/BaseMemoryLib.h>
 
 #include <Protocol/SimplePointer.h>
+#include <Protocol/LoadedImage.h>
 
 #include "EfiNeko.h"
 #include "Util.h"
-#include "Sprite.h"
 #include "Anim.h"
 
 #define FASTFAIL() \
@@ -367,7 +367,6 @@ NekoUpdateAnimation(NekoState *State) {
                   break;
                }
             }
-            Print(L"loop index: %d\n", State->LoopIndex);
             State->LoopIndex++;
          } else {
             State->CurrentFrame++;
@@ -415,6 +414,7 @@ NekoUpdateSpritePos(NekoState *State) {
    if (AnimationType != State->CurrentAnimation) {
       State->TicksElapsed = 0;
       State->CurrentFrame = 0;
+      State->LoopIndex = 0;
       State->CurrentAnimation = AnimationType;
    }
 
@@ -509,6 +509,23 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    EFI_STATUS Status;
    EFI_SIMPLE_POINTER_PROTOCOL *Spp = NULL;
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = NULL;
+   
+   EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
+   CHAR16 *CmdLine;
+   //UINTN Argc;
+   //CHAR16 **Argv;
+
+   Status = gBS->HandleProtocol(
+         ImageHandle,
+         &gEfiLoadedImageProtocolGuid,
+         (VOID**)&LoadedImage
+   );
+   if (EFI_ERROR(Status)) {
+      return Status;
+   }
+
+   CmdLine = (CHAR16*)LoadedImage->LoadOptions;
+   CmdLine++;
 
    NekoState State = {0};
 
@@ -530,12 +547,11 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
    State.PtrY = 0;
    State.PtrXPrev = 0;
    State.PtrYPrev = 0;
-   //State.NekoX = Gop->Mode->Info->HorizontalResolution / 2;
-   //State.NekoY = Gop->Mode->Info->VerticalResolution / 2;
    State.NekoX = 0;
    State.NekoY = 0;
    State.NekoXPrev = 0;
    State.NekoYPrev = 0;
+   State.LoopIndex = 0;
    State.ShouldQuit = FALSE;
    State.NekoPaused = FALSE;
    State.ImageHandle = ImageHandle;
@@ -582,7 +598,7 @@ NekoMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
    UINT8 *SpsData = NULL;
    UINTN SpsSize;
-   Status = UtLoadFileFromRoot(ImageHandle, L"neko.png",
+   Status = UtLoadFileFromRoot(ImageHandle, L"dog.png",
                                (VOID**)&SpsData, &SpsSize);
    if (EFI_ERROR(Status)) {
       return Status;
