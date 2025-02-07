@@ -16,7 +16,6 @@ typedef struct {
    UINT8 Duration;         // number of ticks for this frame
    UINT8 Flags;            // frame flags
    UINT8 LoopIterations;   // number of loop iterations if loop is specified
-   UINT8 LoopIndex;        // index into the current loop
 } AnimationFrame;
 
 typedef struct {
@@ -42,57 +41,77 @@ typedef enum {
 } NekoAnimationType;
 
 static AnimationFrame IdleFrames[] = {
-   { 0, 0, 8, 0, 0, 0 },                           // Idle
-   { 1, 0, 8, 0, 0, 0 },                           // Scratch 1
-   { 2, 0, 8, 0, 0, 0 },                           // Scratch 2
-   { 3, 0, 8, 0, 0, 0 },                           // Scratch 3
-   { 4, 0, 8, 0, 0, 0 },                           // Yawn
-   { 5, 0, 8, NEKO_FRAME_FLAG_LOOP_BEGIN, 0, 0 },  // Sleep 1
-   { 6, 0, 8, NEKO_FRAME_FLAG_LOOP_END, 0, 0 }     // Sleep 2
+   { 0, 0, 8, 0, 0 },                           // Idle
+   { 1, 0, 8, 0, 0 },                           // Scratch 1
+   { 2, 0, 8, NEKO_FRAME_FLAG_LOOP_BEGIN, 2 },  // Scratch 2
+   { 3, 0, 8, NEKO_FRAME_FLAG_LOOP_END, 2 },    // Scratch 3
+   { 4, 0, 8, 0, 0 },                           // Yawn
+   { 5, 0, 8, NEKO_FRAME_FLAG_LOOP_BEGIN, 0 },  // Sleep 1
+   { 6, 0, 8, NEKO_FRAME_FLAG_LOOP_END, 0 }     // Sleep 2
 };
 
 static AnimationFrame StartledFrames[] = {
-   { 7, 0, 8, 0, 0, 0 }                            // Startled
+   { 7, 0, 8, 0, 0 }                            // Startled
 };
 
 static AnimationFrame RunUpFrames[] = {
-   { 0, 2, 8, 0, 0, 0 },                           // RunUp 1
-   { 1, 2, 8, 0, 0, 0 }                            // RunUp 2
+   { 0, 2, 8, 0, 0 },                           // RunUp 1
+   { 1, 2, 8, 0, 0 }                            // RunUp 2
 };
 
 static AnimationFrame RunUpRightFrames[] = {
-   { 6, 1, 8, 0, 0, 0 },                           // RunUpRight 1
-   { 7, 1, 8, 0, 0, 0 }                            // RunUpRight 2
+   { 6, 1, 8, 0, 0 },                           // RunUpRight 1
+   { 7, 1, 8, 0, 0 }                            // RunUpRight 2
 };
 
 static AnimationFrame RunRightFrames[] = {
-   { 4, 1, 8, 0, 0, 0 },                           // RunRight 1
-   { 5, 1, 8, 0, 0, 0 }                            // RunRight 2
+   { 4, 1, 8, 0, 0 },                           // RunRight 1
+   { 5, 1, 8, 0, 0 }                            // RunRight 2
 };
 
 static AnimationFrame RunDownRightFrames[] = {
-   { 2, 1, 8, 0, 0, 0 },                           // RunDownRight 1
-   { 3, 1, 8, 0, 0, 0 }                            // RunDownRight 2
+   { 2, 1, 8, 0, 0 },                           // RunDownRight 1
+   { 3, 1, 8, 0, 0 }                            // RunDownRight 2
 };
 
 static AnimationFrame RunDownFrames[] = {
-   { 0, 1, 8, 0, 0, 0 },                           // RunDown 1
-   { 1, 1, 8, 0, 0, 0 }                            // RunDown 2
+   { 0, 1, 8, 0, 0 },                           // RunDown 1
+   { 1, 1, 8, 0, 0 }                            // RunDown 2
 };
 
 static AnimationFrame RunDownLeftFrames[] = {
-   { 6, 2, 8, 0, 0, 0 },                           // RunDownLeft 1
-   { 7, 2, 8, 0, 0, 0 }                            // RunDownLeft 2
+   { 6, 2, 8, 0, 0 },                           // RunDownLeft 1
+   { 7, 2, 8, 0, 0 }                            // RunDownLeft 2
 };
 
 static AnimationFrame RunLeftFrames[] = {
-   { 4, 2, 8, 0, 0, 0 },                           // RunLeft 1
-   { 5, 2, 8, 0, 0, 0 }                            // RunLeft 2
+   { 4, 2, 8, 0, 0 },                           // RunLeft 1
+   { 5, 2, 8, 0, 0 }                            // RunLeft 2
 };
 
 static AnimationFrame RunUpLeftFrames[] = {
-   { 2, 2, 8, 0, 0, 0 },                           // RunUpLeft 1
-   { 3, 2, 8, 0, 0, 0 }                            // RunUpLeft 2
+   { 2, 2, 8, 0, 0 },                           // RunUpLeft 1
+   { 3, 2, 8, 0, 0 }                            // RunUpLeft 2
+};
+
+static AnimationFrame ScratchLeftFrames[] = {
+   { 0, 3, 8, 0, 0 },                           // ScratchLeft 1
+   { 1, 3, 8, 0, 0 }                            // ScratchLeft 2
+};
+
+static AnimationFrame ScratchUpFrames[] = {
+   { 4, 3, 8, 0, 0 },                           // ScratchUp 1
+   { 5, 3, 8, 0, 0 }                            // ScratchUp 2
+};
+
+static AnimationFrame ScratchRightFrames[] = {
+   { 2, 3, 8, 0, 0 },                           // ScratchRight 1
+   { 3, 3, 8, 0, 0 }                            // ScratchRight 2
+};
+
+static AnimationFrame ScratchDownFrames[] = {
+   { 6, 3, 8, 0, 0 },                           // ScratchDown 1
+   { 7, 3, 8, 0, 0 }                            // ScratchDown 2
 };
 
 static const AnimationSequence AnimationSequences[] = {
@@ -135,6 +154,22 @@ static const AnimationSequence AnimationSequences[] = {
    [NEKO_ANIM_RUN_UP_LEFT] = {
       .Frames = RunUpLeftFrames,
       .FrameCount = FRAME_COUNT(RunUpLeftFrames)
+   },
+   [NEKO_ANIM_SCRATCH_UP] = {
+      .Frames = ScratchUpFrames,
+      .FrameCount = FRAME_COUNT(ScratchUpFrames)
+   },
+   [NEKO_ANIM_SCRATCH_RIGHT] = {
+      .Frames = ScratchRightFrames,
+      .FrameCount = FRAME_COUNT(ScratchRightFrames)
+   },
+   [NEKO_ANIM_SCRATCH_DOWN] = {
+      .Frames = ScratchDownFrames,
+      .FrameCount = FRAME_COUNT(ScratchDownFrames)
+   },
+   [NEKO_ANIM_SCRATCH_LEFT] = {
+      .Frames = ScratchLeftFrames,
+      .FrameCount = FRAME_COUNT(ScratchLeftFrames)
    }
 };
 

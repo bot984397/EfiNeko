@@ -21,7 +21,6 @@
 #define EC(expr) do { EFI_STATUS Status = (expr); if (EFI_ERROR(Status)) return Status; } while (0)
 
 #define NEKO_ANIM_INTERVAL 700000
-//#define NEKO_ANIM_INTERVAL 8000000
 #define NEKO_INPUT_INTERVAL 50000
 
 #define CURSOR_WIDTH 16
@@ -117,7 +116,7 @@ NekoHardReset(NekoState *State) {
 
 }
 
-EFI_STATUS EFIAPI
+static EFI_STATUS EFIAPI
 NekoInitSpp(EFI_SIMPLE_POINTER_PROTOCOL **Spp) {
    EFI_STATUS Status;
 
@@ -136,7 +135,7 @@ NekoInitSpp(EFI_SIMPLE_POINTER_PROTOCOL **Spp) {
    return EFI_SUCCESS;
 }
 
-EFI_STATUS EFIAPI
+static EFI_STATUS EFIAPI
 NekoSetGopMode(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop) {
    EFI_STATUS Status;
    UINTN MaxMode = Gop->Mode->MaxMode;
@@ -172,7 +171,7 @@ NekoSetGopMode(EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop) {
    return EFI_SUCCESS;
 }
 
-EFI_STATUS EFIAPI
+static EFI_STATUS EFIAPI
 NekoInitGop(EFI_GRAPHICS_OUTPUT_PROTOCOL **Gop, NekoState *State) {
    EFI_STATUS Status;
 
@@ -248,7 +247,7 @@ NekoPngToGopBlt(UINT8 *ImageData,
    return EFI_SUCCESS;
 }
 
-EFI_STATUS EFIAPI
+static EFI_STATUS EFIAPI
 NekoDrawBackground(NekoState *State) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
    // we'll use a black screen for now, add support for images etc later.
@@ -262,7 +261,7 @@ NekoDrawBackground(NekoState *State) {
    return EFI_SUCCESS;
 }
 
-VOID EFIAPI
+static VOID EFIAPI
 NekoUpdateCursorPos(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
    // FIXME: add adaptive scaling
    INT32 NewX = State->PtrX + (Ptr.RelativeMovementX / 10000);
@@ -272,7 +271,7 @@ NekoUpdateCursorPos(EFI_SIMPLE_POINTER_STATE Ptr, NekoState *State) {
    State->PtrY = MAX(0, MIN(NewY, (INT32)State->ScrY - CURSOR_HEIGHT));
 }
 
-VOID EFIAPI
+static VOID EFIAPI
 NekoDrawCursor(NekoState *State) {
    EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop = State->Gop;
 
@@ -361,16 +360,19 @@ NekoUpdateAnimation(NekoState *State) {
    if (State->TicksElapsed == Frame->Duration) {
       if (Frame->Flags == NEKO_FRAME_FLAG_LOOP_END) {
          if (State->LoopIndex < Frame->LoopIterations || Frame->LoopIterations == 0) {
-            for (UINTN i = 0; i < Sequence->FrameCount; i++) {
+            for (UINTN i = State->CurrentFrame; i >= 0; i--) {
                if (Sequence->Frames[i].Flags == NEKO_FRAME_FLAG_LOOP_BEGIN) {
                   State->CurrentFrame = i;
                   State->TicksElapsed = 0;
                   break;
                }
             }
+            Print(L"loop index: %d\n", State->LoopIndex);
+            State->LoopIndex++;
          } else {
             State->CurrentFrame++;
             State->TicksElapsed = 0;
+            State->LoopIndex = 0;
          }
       } else {
          State->CurrentFrame++;
@@ -414,6 +416,16 @@ NekoUpdateSpritePos(NekoState *State) {
       State->TicksElapsed = 0;
       State->CurrentFrame = 0;
       State->CurrentAnimation = AnimationType;
+   }
+
+   if (State->NekoX == 0) {
+      State->CurrentAnimation = NEKO_ANIM_SCRATCH_LEFT;
+   } else if (State->NekoX == State->ScrX) {
+      State->CurrentAnimation = NEKO_ANIM_SCRATCH_RIGHT;
+   } else if (State->NekoY == 0) {
+      State->CurrentAnimation = NEKO_ANIM_SCRATCH_DOWN;
+   } else if (State->NekoY == State->ScrY) {
+      State->CurrentAnimation = NEKO_ANIM_SCRATCH_UP;
    }
 
    NekoUpdateAnimation(State);
